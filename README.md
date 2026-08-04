@@ -25,7 +25,7 @@ before any decision about replacing anything.
 
 1. In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ (top
    right) → Repositories**, add:
-   `https://github.com/dtr0tmw/app1-nrt-shadow-addon`
+   `https://github.com/Dtrotmw/app1-nrt-shadow-addon-`
 2. Find "APP1 NRT Shadow Retrieval" in the store, install it.
 3. Open its **Configuration** tab and set `smb_password` to the Atom's
    `dji` account password (this is the only secret the add-on needs;

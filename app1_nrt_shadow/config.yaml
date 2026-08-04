@@ -8,7 +8,7 @@ description: >-
   estimate every ~15 minutes. Does NOT publish anything to Home Assistant
   or touch any existing sensor/automation -- comparison-only, for a
   multi-week trial before any decision about replacing the live system.
-url: "https://github.com/dtr0tmw/app1-nrt-shadow-addon"
+url: "https://github.com/Dtrotmw/app1-nrt-shadow-addon-"
 arch:
   - amd64
 startup: services
