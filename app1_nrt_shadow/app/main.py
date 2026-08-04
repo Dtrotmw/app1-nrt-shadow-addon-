@@ -287,15 +287,31 @@ _nav_cache = {}
 
 
 def get_nav(targetdate):
+    """Same-day BRDC nav (a full-day aggregate) is often not yet published
+    by IGS/BKG this early in the day -- confirmed directly (2026-08-04:
+    today's file 404s, yesterday's is there and complete). Falls back to
+    the previous day's nav in that case: satellite orbits don't change
+    enough in 24h to meaningfully affect az/el pointing geometry for this
+    application (unlike precise-orbit work, GNSS-IR reflectometry doesn't
+    need cm-level orbit accuracy). Known simplification: once cached, does
+    not later retry for the exact-day file even after it becomes
+    available -- acceptable given the minor effect, revisit if it matters."""
     key = str(pd.Timestamp(targetdate).date())
     if key not in _nav_cache:
         import georinex as gr
         navfile = get_or_download_navfile(NAV_DIR, targetdate, verbose=True)
+        used_date = targetdate
         if not navfile:
-            raise RuntimeError(f"No nav file available for {targetdate}")
+            fallback_date = pd.Timestamp(targetdate) - pd.Timedelta(days=1)
+            navfile = get_or_download_navfile(NAV_DIR, fallback_date, verbose=True)
+            used_date = fallback_date
+            if not navfile:
+                raise RuntimeError(f"No nav file available for {targetdate} or {fallback_date}")
+            log.warning(f"No same-day nav for {key} yet (not published) -- "
+                        f"using {used_date.date()}'s nav instead")
         _nav_cache.clear()  # only keep one day's nav resident at a time
         _nav_cache[key] = gr.load(navfile, use=["G", "E", "R", "C"])
-        log.info(f"Loaded nav for {key}")
+        log.info(f"Loaded nav for {key} (from {used_date.date()})")
     return _nav_cache[key]
 
 
