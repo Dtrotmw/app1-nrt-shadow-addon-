@@ -329,7 +329,21 @@ def main():
     os.makedirs(NAV_DIR, exist_ok=True)
     fetch_dir = os.path.join(DATA_DIR, "incoming")
 
-    smb_connect(opts)
+    # Retry startup SMB connect rather than crashing the container outright --
+    # a wrong/not-yet-set password or a momentary network blip on the Atom
+    # side must not end weeks of otherwise-unattended trial operation.
+    backoff = 10
+    while True:
+        try:
+            smb_connect(opts)
+            break
+        except Exception as e:
+            log.error(f"SMB connect failed ({type(e).__name__}: {e}); "
+                      f"check smb_password in the add-on Configuration tab. "
+                      f"Retrying in {backoff}s.")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 300)
+
     buffer, history, processed = load_state()
     log.info(f"Startup: buffer={len(buffer)} rows, history={len(history)} cycles, "
              f"{len(processed)} files already processed")
