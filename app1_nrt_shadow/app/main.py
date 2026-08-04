@@ -72,6 +72,16 @@ BUFFER_RETAIN_HOURS = 26  # window + anchor lookback + margin
 RATE_FLAG_M_PER_HR = 2.5  # same threshold used throughout the validation
 
 
+def utcnow_naive():
+    """pd.Timestamp.utcnow() is tz-AWARE (unlike stdlib datetime.utcnow());
+    buffer['time'] (built from georinex's RINEX timestamps) is naive, so
+    comparing them directly raises TypeError. Found from a real deployment
+    crash loop -- every cycle's buffer-trim comparison failed silently
+    into the error log until this was fixed. Keep all live-clock reads
+    naive for consistency with the buffer."""
+    return pd.Timestamp.utcnow().tz_localize(None)
+
+
 def load_options():
     with open("/data/options.json") as f:
         return json.load(f)
@@ -154,7 +164,7 @@ def smb_list_candidate_files(opts):
     (D:\\GNSS\\DATA's own layout, mirrored on the Atom). Only look at
     today's and yesterday's directories -- more than enough margin for a
     15-min-cadence poll."""
-    now = pd.Timestamp.utcnow()
+    now = utcnow_naive()
     dirs = [(now - pd.Timedelta(days=d)) for d in (1, 0)]
     dirnames = [f"{d.strftime('%y')}{d.strftime('%j')}" for d in dirs]
     root = smb_root(opts)
@@ -400,7 +410,7 @@ def main():
                     processed.add(fn)  # don't retry a poison file forever
 
             if len(buffer):
-                cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=BUFFER_RETAIN_HOURS)
+                cutoff = utcnow_naive() - pd.Timedelta(hours=BUFFER_RETAIN_HOURS)
                 buffer = buffer[buffer["time"] >= cutoff].reset_index(drop=True)
 
             if len(buffer):
