@@ -1,0 +1,9 @@
+georinex==1.16.2
+numpy==2.3.5
+scipy==1.16.3
+pandas==2.3.3
+xarray==2025.10.1
+pymap3d==3.2.0
+smbprotocol==1.17.0
+requests==2.32.3
+pyarrow==21.0.0
