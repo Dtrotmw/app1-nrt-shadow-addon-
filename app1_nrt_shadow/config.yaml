@@ -1,5 +1,5 @@
 name: "APP1 NRT Shadow Retrieval"
-version: "0.1.4"
+version: "0.1.5"
 slug: "app1_nrt_shadow"
 description: >-
   Read-only shadow trial of the new GNSS-IR retrieval pipeline (wide mask +
@@ -21,9 +21,14 @@ init: false
 # needed). This is a read path, not a write path -- the standing "ask
 # permission before editing H:\" rule is about writes; this add-on never
 # writes anything under /config.
+# share:rw -- /share is a folder every add-on can see (File editor, Samba
+# share add-on, etc.), used ONLY to mirror results.csv out so it's actually
+# reachable without container/host shell access. Nothing else is written
+# there.
 map:
   - "addon_config:rw"
   - "config:ro"
+  - "share:rw"
 options:
   smb_host: "192.168.1.120"
   smb_share: "AtomShare"

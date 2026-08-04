@@ -284,9 +284,21 @@ def save_processed(processed):
         json.dump(sorted(processed), f)
 
 
+SHARE_RESULTS_CSV = "/share/app1_nrt_shadow_results.csv"
+
+
 def append_result(row):
     header = not os.path.exists(RESULTS_CSV)
     pd.DataFrame([row]).to_csv(RESULTS_CSV, mode="a", header=header, index=False)
+    # Also mirror to /share -- /data is a private per-add-on volume with no
+    # network path; /share is visible to other add-ons (File editor, Samba
+    # share, etc.) so David can actually read the trial results without
+    # needing container/host shell access.
+    try:
+        import shutil
+        shutil.copy(RESULTS_CSV, SHARE_RESULTS_CSV)
+    except Exception as e:
+        log.warning(f"Could not mirror results.csv to /share: {type(e).__name__}: {e}")
 
 
 # ---------------------------------------------------------------------------
