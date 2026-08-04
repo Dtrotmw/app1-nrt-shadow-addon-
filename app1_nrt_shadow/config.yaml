@@ -1,5 +1,5 @@
 name: "APP1 NRT Shadow Retrieval"
-version: "0.1.1"
+version: "0.1.2"
 slug: "app1_nrt_shadow"
 description: >-
   Read-only shadow trial of the new GNSS-IR retrieval pipeline (wide mask +

@@ -362,7 +362,16 @@ def main():
                 try:
                     local_gz = smb_fetch(opts, dn, fn, fetch_dir)
                     decimated = decimate_text(local_gz)
-                    nav = get_nav(pd.Timestamp.utcnow())
+                    # Nav date must match the FILE's own YYDOY directory (dn),
+                    # not wall-clock "now" -- a backlog file from yesterday's
+                    # directory needs yesterday's nav, and today's nav often
+                    # isn't fully published yet this early in the day (bug
+                    # found from a real deployment: every backlog file failed
+                    # with "No nav file available" because it was requesting
+                    # today's nav for yesterday's data).
+                    from datetime import datetime as _dt
+                    file_date = pd.Timestamp(_dt.strptime(dn, "%y%j"))
+                    nav = get_nav(file_date)
                     new_rows = extract_file(decimated, nav)
                     if not new_rows.empty:
                         buffer = pd.concat([buffer, new_rows], ignore_index=True)
