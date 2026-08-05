@@ -13,8 +13,9 @@ nothing to Home Assistant and does not modify anything in `/config`.
 | `smb_username` | Samba account (default `dji`) |
 | `smb_password` | **Set this** -- the only thing you need to configure |
 | `poll_interval_seconds` | How often to check for new RINEX files (default 60) |
-| `report_interval_minutes` | Retrieval cycle cadence (default 15, matching native RINEX cadence) |
 | `pred_file_path` | Live tide prediction source, read-only from `/config` (default already correct: `/config/www/gnss5mins.csv`) |
+
+Retrieval cycles run whenever a new RINEX file's own boundary is reached (native ~15min cadence, driven by file arrival, not a separate configurable interval -- see CHANGELOG 0.1.8).
 
 ## Log output
 

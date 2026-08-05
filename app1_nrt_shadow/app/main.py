@@ -34,6 +34,7 @@ import sys
 import time
 import warnings
 from collections import deque
+from datetime import datetime
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,9 +43,10 @@ import numpy as np
 import pandas as pd
 import pymap3d as pm
 import smbclient
+from scipy import interpolate
 
 from pipeline.arcfit import (
-    RX_XYZ, get_or_download_navfile, build_predinterp,
+    RX_XYZ, TOTALANTH, get_or_download_navfile, build_predinterp,
 )
 from pipeline.geometry import SIG_PRIORITY, az_el_series
 from pipeline.masks import MASK_NW_REFINED
@@ -143,6 +145,33 @@ def robust_prior_info(history):
     rough_vals = [info["roughness"] for info in history if info.get("roughness") is not None]
     roughness = float(np.median(rough_vals)) if rough_vals else None
     return dict(t0=t0, knots=knots, kval=kval_med, streams=streams, ab=ab, roughness=roughness)
+
+
+HOUR_MASK = "abcdefghijklmnopqrstuvwx"  # matches pipeline/concat_rinex_day.py's convention
+
+
+def rinex_file_end_time(fn):
+    """The file's own nominal END boundary -- start-of-span + 15min -- parsed
+    straight from its filename: APP1{doy}{hourletter}{minute:02d}.{yy}O[.gz],
+    e.g. 'APP1216u30.26O.gz' covers [20:30,20:45) UTC on day 216 of 2026
+    ('u' = 20th letter = hour 20). Confirmed against real log evidence
+    before deploying: that exact file was ingested at 20:44:57 UTC, ~3s
+    before this function's computed boundary of 20:45:00.
+
+    Used instead of flooring the buffer's raw max sample timestamp (the
+    original v1 approach) -- that requires the NEXT file to have arrived
+    before a boundary is recognised at all (files only exist as complete
+    15-min batches, per hardware.txt's 15-min upload cron), adding a full
+    avoidable ~15min to every report's latency for no accuracy benefit.
+    Keying off the arriving file's own known boundary directly removes
+    that extra lag."""
+    base = fn.split(".")[0]  # "APP1216u30"
+    doy = base[4:7]
+    hour = HOUR_MASK.index(base[7])
+    minute = int(base[8:10])
+    yy = fn.split(".")[1][:2]  # "26" from "26O" or "26O.gz"
+    day = pd.Timestamp(datetime.strptime(f"{yy}{doy}", "%y%j"))
+    return day + pd.Timedelta(hours=hour, minutes=minute + 15)
 
 
 # ---------------------------------------------------------------------------
@@ -268,13 +297,15 @@ def load_state():
     buffer = pd.read_parquet(BUFFER_PARQUET) if os.path.exists(BUFFER_PARQUET) else pd.DataFrame()
     history = pickle.load(open(HISTORY_PICKLE, "rb")) if os.path.exists(HISTORY_PICKLE) else []
     processed = set(json.load(open(PROCESSED_JSON))) if os.path.exists(PROCESSED_JSON) else set()
-    last_value, last_report_time = None, None
+    last_value, last_report_time, latest_file_end = None, None, None
     if os.path.exists(LAST_REPORT_JSON):
         d = json.load(open(LAST_REPORT_JSON))
         last_value = d.get("last_value")
         if d.get("last_report_time"):
             last_report_time = pd.Timestamp(d["last_report_time"])
-    return buffer, history, processed, last_value, last_report_time
+        if d.get("latest_file_end"):
+            latest_file_end = pd.Timestamp(d["latest_file_end"])
+    return buffer, history, processed, last_value, last_report_time, latest_file_end
 
 
 def save_buffer(buffer):
@@ -291,10 +322,11 @@ def save_processed(processed):
         json.dump(sorted(processed), f)
 
 
-def save_last_report(last_value, last_report_time):
+def save_last_report(last_value, last_report_time, latest_file_end):
     with open(LAST_REPORT_JSON, "w") as f:
         json.dump(dict(last_value=last_value,
-                        last_report_time=str(last_report_time) if last_report_time is not None else None), f)
+                        last_report_time=str(last_report_time) if last_report_time is not None else None,
+                        latest_file_end=str(latest_file_end) if latest_file_end is not None else None), f)
 
 
 SHARE_RESULTS_CSV = "/share/app1_nrt_shadow_results.csv"
@@ -387,9 +419,29 @@ def run_cycle(T, buffer, history, pred_path):
         prior_info=prior, state_anchor_weight=STATE_ANCHOR_WEIGHT,
         **RETRIEVAL_KWARGS,
     )
-    if series.empty:
+    if "kval" not in info:
+        # invsnr_day's early-return "fail" dicts (no samples/too few arcs/
+        # etc.) never populate kval/knots/t0 -- genuinely no result.
         return None, info
-    value = float(series["finallevel"].iloc[-1])
+
+    # Evaluate the fitted spline exactly AT T, not at invsnr_day's own
+    # internal report grid's last point (series["finallevel"].iloc[-1]),
+    # which floors the actual last SAMPLE time to 15min and so lands one
+    # bin (~15min) SHORT of T now that T is set from the arriving file's
+    # own boundary (rinex_file_end_time) rather than a floor of the raw
+    # buffer max -- using the old grid here would have silently thrown
+    # away the entire latency benefit of that fix. Re-derives the same
+    # cubic interpolation invsnr_day uses internally from info["t0"]/
+    # ["knots"]/["kval"], entirely on the main.py side so the shared,
+    # backtested invsnr_fit.py used throughout the whole accuracy
+    # campaign is untouched.
+    t_abs_sec = ((info["t0"] + pd.to_timedelta(info["knots"], unit="s"))
+                 - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)
+    t_abs_sec = t_abs_sec.to_numpy(float)
+    hf = interpolate.interp1d(t_abs_sec, info["kval"], kind="cubic", fill_value="extrapolate")
+    T_sec = (T - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)
+    T_sec = float(np.clip(T_sec, t_abs_sec.min(), t_abs_sec.max()))
+    value = float(TOTALANTH - hf(T_sec))
     return value, info
 
 
@@ -414,13 +466,12 @@ def main():
             time.sleep(backoff)
             backoff = min(backoff * 2, 300)
 
-    buffer, history, processed, last_value, last_report_time = load_state()
+    buffer, history, processed, last_value, last_report_time, latest_file_end = load_state()
     log.info(f"Startup: buffer={len(buffer)} rows, history={len(history)} cycles, "
              f"{len(processed)} files already processed, "
-             f"last_report_time={last_report_time}")
+             f"last_report_time={last_report_time}, latest_file_end={latest_file_end}")
 
     poll_s = opts["poll_interval_seconds"]
-    report_min = opts["report_interval_minutes"]
     pred_path = opts["pred_file_path"]
 
     while True:
@@ -447,6 +498,14 @@ def main():
                         buffer = pd.concat([buffer, new_rows], ignore_index=True)
                         log.info(f"Ingested {fn}: {len(new_rows)} rows")
                     processed.add(fn)
+                    # Report as soon as THIS file's own known boundary is
+                    # reached, not once we've floored the buffer's raw max
+                    # sample time (which needs the NEXT file to arrive first
+                    # -- an avoidable extra ~15min of latency, since files
+                    # only exist as complete 15-min batches to begin with).
+                    file_end = rinex_file_end_time(fn)
+                    if latest_file_end is None or file_end > latest_file_end:
+                        latest_file_end = file_end
                 except NavUnavailableError as e:
                     log.warning(f"Deferring {fn} (not marking processed): {e}")
                 except Exception as e:
@@ -464,9 +523,8 @@ def main():
                 cutoff = utcnow_naive() - pd.Timedelta(hours=BUFFER_RETAIN_HOURS)
                 buffer = buffer[buffer["time"] >= cutoff].reset_index(drop=True)
 
-            if len(buffer):
-                latest_data_time = buffer["time"].max()
-                candidate_report = latest_data_time.floor(f"{report_min}min")
+            if len(buffer) and latest_file_end is not None:
+                candidate_report = latest_file_end
                 if last_report_time is None or candidate_report > last_report_time:
                     t0 = time.time()
                     value, info = run_cycle(candidate_report, buffer, history, pred_path)
@@ -492,7 +550,7 @@ def main():
                         history = history[-N_HISTORY:]
                         last_value, last_report_time = value, candidate_report
                         save_history(history)
-                        save_last_report(last_value, last_report_time)
+                        save_last_report(last_value, last_report_time, latest_file_end)
                     else:
                         log.warning(f"Cycle {candidate_report}: no result "
                                     f"({info.get('fail') if info else 'empty window'})")

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.8
+- Removed an avoidable ~15min of reporting latency. Previously, a report for
+  boundary T only appeared once the buffer's raw latest-sample timestamp,
+  floored to 15min, reached T -- which requires the *next* file to have
+  already arrived (files only exist as complete 15-min batches), adding a
+  full extra bin of delay for no accuracy benefit. Now keys the report
+  boundary directly off each arriving file's own known nominal end time
+  (parsed from its filename), so a report appears as soon as its own
+  file lands.
+- Since the report boundary can now be earlier than invsnr_day's own
+  internal grid would produce (its last grid point is the actual last
+  sample's time floored to 15min), the reported value is now evaluated
+  directly at the report boundary via the fitted spline's own
+  parameters, rather than read off that internal grid's last point.
+- Removed the now-vestigial `report_interval_minutes` option -- reporting
+  cadence is driven by file arrival, not a separate configurable interval.
+
 ## 0.1.7
 - Fixed a crash when a retrieval window contains zero detected arcs at all
   (not just zero accepted) -- `arc_df` came back with no columns at all in
