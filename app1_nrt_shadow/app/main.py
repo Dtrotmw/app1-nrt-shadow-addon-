@@ -60,6 +60,7 @@ RESULTS_CSV = os.path.join(DATA_DIR, "results.csv")
 BUFFER_PARQUET = os.path.join(DATA_DIR, "rolling_buffer.parquet")
 HISTORY_PICKLE = os.path.join(DATA_DIR, "anchor_history.pkl")
 PROCESSED_JSON = os.path.join(DATA_DIR, "processed_files.json")
+LAST_REPORT_JSON = os.path.join(DATA_DIR, "last_report.json")
 NAV_DIR = os.path.join(DATA_DIR, "nav")
 
 # Validated 2026-08 campaign config (CHANGELOG entries 39-46). Do not change
@@ -267,7 +268,13 @@ def load_state():
     buffer = pd.read_parquet(BUFFER_PARQUET) if os.path.exists(BUFFER_PARQUET) else pd.DataFrame()
     history = pickle.load(open(HISTORY_PICKLE, "rb")) if os.path.exists(HISTORY_PICKLE) else []
     processed = set(json.load(open(PROCESSED_JSON))) if os.path.exists(PROCESSED_JSON) else set()
-    return buffer, history, processed
+    last_value, last_report_time = None, None
+    if os.path.exists(LAST_REPORT_JSON):
+        d = json.load(open(LAST_REPORT_JSON))
+        last_value = d.get("last_value")
+        if d.get("last_report_time"):
+            last_report_time = pd.Timestamp(d["last_report_time"])
+    return buffer, history, processed, last_value, last_report_time
 
 
 def save_buffer(buffer):
@@ -282,6 +289,12 @@ def save_history(history):
 def save_processed(processed):
     with open(PROCESSED_JSON, "w") as f:
         json.dump(sorted(processed), f)
+
+
+def save_last_report(last_value, last_report_time):
+    with open(LAST_REPORT_JSON, "w") as f:
+        json.dump(dict(last_value=last_value,
+                        last_report_time=str(last_report_time) if last_report_time is not None else None), f)
 
 
 SHARE_RESULTS_CSV = "/share/app1_nrt_shadow_results.csv"
@@ -305,31 +318,50 @@ def append_result(row):
 # Nav (daily broadcast ephemeris)
 # ---------------------------------------------------------------------------
 
+class NavUnavailableError(RuntimeError):
+    """Nav not (yet) published -- transient, worth retrying later, unlike a
+    genuinely corrupt RINEX file. Kept distinct from other ingest failures
+    so main()'s poison-file guard doesn't permanently skip files that only
+    failed because nav wasn't out yet (a real bug: every file that failed
+    with the old plain RuntimeError got marked processed forever, even
+    after the underlying nav-lookback fix landed)."""
+
+
 _nav_cache = {}
 
 
+NAV_MAX_LOOKBACK_DAYS = 5  # see docstring below
+
+
 def get_nav(targetdate):
-    """Same-day BRDC nav (a full-day aggregate) is often not yet published
-    by IGS/BKG this early in the day -- confirmed directly (2026-08-04:
-    today's file 404s, yesterday's is there and complete). Falls back to
-    the previous day's nav in that case: satellite orbits don't change
-    enough in 24h to meaningfully affect az/el pointing geometry for this
-    application (unlike precise-orbit work, GNSS-IR reflectometry doesn't
-    need cm-level orbit accuracy). Known simplification: once cached, does
-    not later retry for the exact-day file even after it becomes
-    available -- acceptable given the minor effect, revisit if it matters."""
+    """This combined ('01D') BRDC nav product from IGS/BKG has a real
+    publication lag of ~2 days, not "published later the same day" as a
+    single-day fallback (v0.1.3) assumed -- confirmed directly from a real
+    deployment stall (2026-08-05 08:45: both day 217 AND day 216 still
+    404, day 215 the most recent actually available). Walks back day by
+    day until it finds one that exists, rather than trying only one
+    fallback. Satellite orbits don't change enough over a few days to
+    meaningfully affect az/el pointing geometry for this application
+    (unlike precise-orbit work, GNSS-IR reflectometry doesn't need cm-
+    level orbit accuracy). Known simplification: once cached, does not
+    later retry for a more-current file even after it becomes available
+    -- acceptable given the minor effect, revisit if it matters."""
     key = str(pd.Timestamp(targetdate).date())
     if key not in _nav_cache:
         import georinex as gr
-        navfile = get_or_download_navfile(NAV_DIR, targetdate, verbose=True)
-        used_date = targetdate
+        navfile = None
+        used_date = None
+        for back in range(NAV_MAX_LOOKBACK_DAYS + 1):
+            try_date = pd.Timestamp(targetdate) - pd.Timedelta(days=back)
+            navfile = get_or_download_navfile(NAV_DIR, try_date, verbose=True)
+            if navfile:
+                used_date = try_date
+                break
         if not navfile:
-            fallback_date = pd.Timestamp(targetdate) - pd.Timedelta(days=1)
-            navfile = get_or_download_navfile(NAV_DIR, fallback_date, verbose=True)
-            used_date = fallback_date
-            if not navfile:
-                raise RuntimeError(f"No nav file available for {targetdate} or {fallback_date}")
-            log.warning(f"No same-day nav for {key} yet (not published) -- "
+            raise NavUnavailableError(f"No nav file available for {targetdate} within "
+                                       f"{NAV_MAX_LOOKBACK_DAYS} days back")
+        if used_date.date() != pd.Timestamp(targetdate).date():
+            log.warning(f"No nav for {key} yet (not published) -- "
                         f"using {used_date.date()}'s nav instead")
         _nav_cache.clear()  # only keep one day's nav resident at a time
         _nav_cache[key] = gr.load(navfile, use=["G", "E", "R", "C"])
@@ -382,12 +414,11 @@ def main():
             time.sleep(backoff)
             backoff = min(backoff * 2, 300)
 
-    buffer, history, processed = load_state()
+    buffer, history, processed, last_value, last_report_time = load_state()
     log.info(f"Startup: buffer={len(buffer)} rows, history={len(history)} cycles, "
-             f"{len(processed)} files already processed")
+             f"{len(processed)} files already processed, "
+             f"last_report_time={last_report_time}")
 
-    last_value = None
-    last_report_time = None
     poll_s = opts["poll_interval_seconds"]
     report_min = opts["report_interval_minutes"]
     pred_path = opts["pred_file_path"]
@@ -397,6 +428,7 @@ def main():
             candidates = smb_list_candidate_files(opts)
             new_files = [(dn, fn) for dn, fn in candidates if fn not in processed]
             for dn, fn in sorted(new_files):
+                local_gz, decimated = None, None
                 try:
                     local_gz = smb_fetch(opts, dn, fn, fetch_dir)
                     decimated = decimate_text(local_gz)
@@ -415,11 +447,18 @@ def main():
                         buffer = pd.concat([buffer, new_rows], ignore_index=True)
                         log.info(f"Ingested {fn}: {len(new_rows)} rows")
                     processed.add(fn)
-                    os.remove(local_gz)
-                    os.remove(decimated)
+                except NavUnavailableError as e:
+                    log.warning(f"Deferring {fn} (not marking processed): {e}")
                 except Exception as e:
                     log.warning(f"Failed to ingest {fn}: {type(e).__name__}: {e}")
-                    processed.add(fn)  # don't retry a poison file forever
+                    processed.add(fn)  # don't retry a genuinely poison file forever
+                finally:
+                    # Always clean up temp files, even on failure -- previously
+                    # only happened on success, leaking files in /data/incoming
+                    # on every ingest failure over weeks of unattended operation.
+                    for p in (local_gz, decimated):
+                        if p and os.path.exists(p):
+                            os.remove(p)
 
             if len(buffer):
                 cutoff = utcnow_naive() - pd.Timedelta(hours=BUFFER_RETAIN_HOURS)
@@ -453,6 +492,7 @@ def main():
                         history = history[-N_HISTORY:]
                         last_value, last_report_time = value, candidate_report
                         save_history(history)
+                        save_last_report(last_value, last_report_time)
                     else:
                         log.warning(f"Cycle {candidate_report}: no result "
                                     f"({info.get('fail') if info else 'empty window'})")
