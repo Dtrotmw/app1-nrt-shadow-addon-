@@ -70,6 +70,15 @@ def collect_arc_samples(targetdate, sectors, cfg=None, refraction_fn=None,
     arc_df = cached_run_day(targetdate, sectors=sectors, cfg=cfg,
                              refraction_fn=refraction_fn, signal_mode=signal_mode,
                              cache_df=df, predfile_override=predfile_override)
+    if arc_df.empty:
+        # cached_run_day returns a column-less pd.DataFrame([]) when zero
+        # arcs are found at all (not just zero accepted) -- arc_df["status"]
+        # would KeyError. Never hit in backtesting (full-day windows over
+        # already-known-good historical data always found some arcs), but a
+        # real live sliding window can come up genuinely empty (thin buffer
+        # just after a restart, a quiet period). Bail out the same way the
+        # "zero accepted arcs" case already does downstream.
+        return arc_df, pd.DataFrame()
     acc = arc_df[arc_df["status"] == "ACCEPT"]
 
     sample_frames = []

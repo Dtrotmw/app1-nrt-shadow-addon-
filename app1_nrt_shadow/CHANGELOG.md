@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7
+- Fixed a crash when a retrieval window contains zero detected arcs at all
+  (not just zero accepted) -- `arc_df` came back with no columns at all in
+  that case, so filtering on `arc_df["status"]` raised `KeyError: 'status'`.
+  Never hit in backtesting (full-day windows always found some arcs), but a
+  short live window can legitimately come up empty. Now handled the same
+  way as "zero usable samples" already was -- the cycle is skipped and
+  logged, not crashed.
+
 ## 0.1.6
 - Fixed nav publication-lag stall: the combined IGS/BKG BRDC nav product's
   real publication lag is ~2 days, not 1 -- `get_nav()` now walks back up
