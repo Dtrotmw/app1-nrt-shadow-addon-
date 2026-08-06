@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9
+- Fixed a CSV formatting bug found during a health-check analysis: pandas
+  drops the time-of-day when a single-row CSV append's report_time happens
+  to be exactly midnight, writing bare "2026-08-06" instead of
+  "2026-08-06 00:00:00" -- broke a naive pd.read_csv() parse of the file.
+  report_time is now explicitly formatted on every row.
+
 ## 0.1.8
 - Removed an avoidable ~15min of reporting latency. Previously, a report for
   boundary T only appeared once the buffer's raw latest-sample timestamp,

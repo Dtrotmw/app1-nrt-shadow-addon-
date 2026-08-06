@@ -333,6 +333,15 @@ SHARE_RESULTS_CSV = "/share/app1_nrt_shadow_results.csv"
 
 
 def append_result(row):
+    # pandas' default CSV datetime formatting drops the time-of-day when a
+    # column's only value happens to be exactly midnight (e.g. writes bare
+    # "2026-08-06" instead of "2026-08-06 00:00:00") -- invisible normally
+    # since almost every row appends a single value, but caught a real
+    # report_time=00:00:00 row doing exactly this during a health-check
+    # analysis, breaking a naive pd.read_csv() parse of the file. Format
+    # explicitly so every row is unambiguous regardless of time-of-day.
+    row = dict(row)
+    row["report_time"] = pd.Timestamp(row["report_time"]).strftime("%Y-%m-%d %H:%M:%S")
     header = not os.path.exists(RESULTS_CSV)
     pd.DataFrame([row]).to_csv(RESULTS_CSV, mode="a", header=header, index=False)
     # Also mirror to /share -- /data is a private per-add-on volume with no
