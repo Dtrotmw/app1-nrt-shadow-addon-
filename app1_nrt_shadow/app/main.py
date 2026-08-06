@@ -58,6 +58,16 @@ from pipeline.k2d_replica import k2d_step
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
                      stream=sys.stdout)
 log = logging.getLogger("nrt_shadow")
+# smbprotocol logs every individual SMB2 protocol exchange (Negotiate,
+# Session Setup, Create, Query Directory, Close, ...) at INFO level -- with
+# our own root logger at INFO too, one directory listing produces ~15 lines
+# of pure protocol noise, drowning out the handful of lines that actually
+# matter (Ingested/Cycle/warnings). Found from a real deployment log
+# (2026-08-06) where a single poll's listing was indistinguishable from the
+# rest of the log at a glance. Raised to WARNING; our own "nrt_shadow"
+# logger above is untouched and still logs at INFO.
+logging.getLogger("smbprotocol").setLevel(logging.WARNING)
+logging.getLogger("smbclient").setLevel(logging.WARNING)
 
 DATA_DIR = "/data"
 RESULTS_CSV = os.path.join(DATA_DIR, "results.csv")
@@ -92,6 +102,18 @@ STATE_ANCHOR_WEIGHT = 50.0
 N_HISTORY = 12          # ~3h of anchor memory at 15-min report cadence (entry 45)
 BUFFER_RETAIN_HOURS = 26  # window + anchor lookback + margin
 RATE_FLAG_M_PER_HR = 2.5  # same threshold used throughout the validation
+
+# RINEX files only ever appear on a fixed 15-min cadence (never in between),
+# and land at/very near their own nominal boundary (confirmed directly from
+# real logs, entry 47/49: seconds, not minutes, of latency). Polling at a
+# fixed short interval regardless of the clock (the original design) mostly
+# just re-lists an unchanged directory and floods the log with smbprotocol's
+# own per-call protocol noise for no benefit -- checking once shortly after
+# each expected boundary is both far cheaper and, if anything, more
+# responsive than polling blindly. Replaces the removed
+# poll_interval_seconds option (same reasoning as report_interval_minutes's
+# removal in v0.1.8).
+POLL_MARGIN_SECONDS = 20
 
 
 def utcnow_naive():
@@ -170,6 +192,18 @@ def load_k2d_state():
 def save_k2d_state(state):
     with open(K2D_STATE_PICKLE, "wb") as f:
         pickle.dump(state, f)
+
+
+def seconds_until_next_check():
+    """Next 15-min boundary + a small margin, not a fixed poll interval --
+    see POLL_MARGIN_SECONDS. Floors a minimum of 5s in case a cycle's own
+    processing time already ran past the intended check point."""
+    now = utcnow_naive()
+    next_boundary = now.ceil("15min")
+    if next_boundary <= now:
+        next_boundary += pd.Timedelta(minutes=15)
+    target = next_boundary + pd.Timedelta(seconds=POLL_MARGIN_SECONDS)
+    return max(5.0, (target - now).total_seconds())
 
 
 def load_options():
@@ -591,7 +625,6 @@ def main():
              f"last_report_time={last_report_time}, latest_file_end={latest_file_end}, "
              f"k2d_state_missing={k2d_state.get('state_missing', False)}")
 
-    poll_s = opts["poll_interval_seconds"]
     pred_path = opts["pred_file_path"]
 
     while True:
@@ -706,7 +739,7 @@ def main():
         except Exception as e:
             log.error(f"Cycle loop error (continuing): {type(e).__name__}: {e}", exc_info=True)
 
-        time.sleep(poll_s)
+        time.sleep(seconds_until_next_check())
 
 
 if __name__ == "__main__":

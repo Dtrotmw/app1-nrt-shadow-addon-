@@ -1,5 +1,5 @@
 name: "APP1 NRT Shadow Retrieval"
-version: "0.2.0"
+version: "0.2.1"
 slug: "app1_nrt_shadow"
 description: >-
   Shadow trial of the new GNSS-IR retrieval pipeline (wide mask + robust
@@ -44,12 +44,10 @@ options:
   smb_share: "AtomShare"
   smb_username: "dji"
   smb_password: ""
-  poll_interval_seconds: 60
   pred_file_path: "/config/www/gnss5mins.csv"
 schema:
   smb_host: "str"
   smb_share: "str"
   smb_username: "str"
   smb_password: "password"
-  poll_interval_seconds: "int(10,300)"
   pred_file_path: "str"

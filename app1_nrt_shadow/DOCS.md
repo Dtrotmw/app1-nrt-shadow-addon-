@@ -16,10 +16,9 @@ itself own.
 | `smb_share` | Samba share name (default `AtomShare`) |
 | `smb_username` | Samba account (default `dji`) |
 | `smb_password` | **Set this** -- the only thing you need to configure |
-| `poll_interval_seconds` | How often to check for new RINEX files (default 60) |
 | `pred_file_path` | Live tide prediction source, read-only from `/config` (default already correct: `/config/www/gnss5mins.csv`) |
 
-Retrieval cycles run whenever a new RINEX file's own boundary is reached (native ~15min cadence, driven by file arrival, not a separate configurable interval -- see CHANGELOG 0.1.8).
+Retrieval cycles run whenever a new RINEX file's own boundary is reached (native ~15min cadence, driven by file arrival, not a separate configurable interval -- see CHANGELOG 0.1.8). The Samba share is checked once shortly after each expected 15-min boundary rather than on a fixed short timer, since files never appear in between anyway -- see CHANGELOG 0.2.1.
 
 ## Log output
 

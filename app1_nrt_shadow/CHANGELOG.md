@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+- Suppressed smbprotocol's own per-SMB2-exchange INFO logging (raised to
+  WARNING) -- it was drowning out the handful of lines that actually
+  matter (Ingested/Cycle/warnings) with pure protocol noise, found from a
+  real deployment log.
+- Replaced the fixed-interval SMB poll with one check shortly after each
+  expected 15-min RINEX boundary -- files never appear in between anyway,
+  so this is both far fewer real network calls and, if anything, more
+  responsive than polling blindly on a timer. Removed the now-vestigial
+  `poll_interval_seconds` option (same reasoning as `report_interval_minutes`'s
+  removal in v0.1.8).
+
 ## 0.2.0
 - Added K2D post-processing (Track A): every raw retrieval is now also run
   through a K2D replica (`pipeline/k2d_replica.py`, same constants as the
