@@ -17,8 +17,21 @@ before any decision about replacing anything.
 2. Decimates (30s), parses (georinex), computes satellite geometry, and
    appends to a rolling buffer (~26h retained).
 3. Runs the validated `invsnr` retrieval (Chivenor+Instow+North mask,
-   robust median-of-history anchor, 8h trailing window) using the live
-   tide prediction already served at `H:\www\gnss5mins.csv`.
+   robust median-of-history anchor, 8h trailing window). The live tide
+   prediction (`H:\www\gnss5mins.csv`) plays two specific roles here, and
+   is **not** blended into the reported height directly: (a) upstream,
+   per-arc quality control uses the predicted height to resolve the
+   periodogram peak-selection ambiguity a single arc's raw SNR data is
+   subject to; (b) inside the fit itself, a surge-smoothness regularizer
+   penalizes rapid knot-to-knot changes in *(fitted height − predicted
+   height)* rather than in the fitted height directly -- since the tide's
+   own fast, large-amplitude curvature is known and free (tracking the
+   prediction's shape costs nothing), only the slowly-varying leftover
+   (surge) is discouraged from jittering. The reported value is always
+   `TOTALANTH − h(T)` from the fitted spline alone; if the SNR
+   observations disagree with the prediction, the fit follows the
+   observations -- the regularizer penalizes the disagreement's rate of
+   change, never its size.
 4. Post-processes that raw value through a K2D replica (`pipeline/k2d_replica.py`,
    the same constants as the deployed filter), reading live surge forcing
    from `sensor.forcing_surge` via Home Assistant's own API -- confirmed
@@ -98,3 +111,39 @@ On real live trial data (2026-08-06, clean 94-point stretch): K2D took
 bias +0.249->+0.165, RMSE 0.343->0.195, implausible jumps 5/93->0/93.
 See `APP1_GNSS-IR_Briefing.md` / `CHANGELOG.md` in the main TidalStudy
 repo for the full validation history.
+
+## Acknowledgments
+
+**Simon Williams (National Oceanography Centre)** is the reason any of
+this exists. His own GNSS-IR pipeline produced the harmonics UKHO
+currently publishes for Appledore and the ones deployed at APP1; his K2D
+Kalman filter and V13 surge model are the live system this add-on runs
+alongside, not against; and this whole comparison depends on his ongoing,
+public ThingSpeak feed and `sensor.forcing_surge` output. This trial
+exists to test whether specific, narrow refinements can be evidenced
+against his own product, using his own data as the reference -- not as a
+critique of it. Any of this that turns out useful is his to take or leave.
+
+The retrieval method itself follows **Strandberg, Hobiger & Haas (2016)**,
+*Radio Science* 51, 1286-1296 -- fitting a single continuous reflector-
+height curve to all of a window's raw SNR data at once, rather than one
+height per satellite arc. The refraction model is **Ulich (1981)** bending
+driven by **Rueger (2002)** radio refractivity, with meteorology from the
+**GPT2w** climatology grid (**Böhm et al., 2015**). Both the inverse-model
+and refraction ports were built reading, line by line, the open-source
+implementations in **Kristine Larson et al.'s `gnssrefl`**
+(github.com/kristinemlarson/gnssrefl) and **David Purnell et al.'s
+`gnssir-rt`** (github.com/purnelldj/gnssir-rt; see also Purnell et al.,
+2024, *Geophysical Research Letters*, their real-time GNSS-IR system).
+A tropospheric correction from **Santamaria-Gomez & Watson (2017)**,
+*GPS Solutions* 21, 451-459, was also tested via `gnssir-rt`'s
+implementation but not adopted -- its mean-elevation approximation
+doesn't hold at APP1's unusually low reflection geometry. The original
+(now superseded) refraction correction was **Bennett (1982)**, "The
+Calculation of Astronomical Refraction in Marine Navigation". The
+mask-boundary sweep method follows **Altuntas & Tunalioglu (2023)**.
+
+This add-on, and the wider research repository it was extracted from,
+were built with **Claude Code** (Anthropic), under David's direction --
+he set every research question, evidence bar, and go/no-go call; Claude
+wrote the code and ran the experiments.
