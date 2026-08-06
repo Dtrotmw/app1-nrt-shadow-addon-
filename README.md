@@ -3,7 +3,7 @@
 A Home Assistant add-on running the validated GNSS-IR retrieval pipeline
 (wide mask + robust anchor, 2026-08 accuracy campaign), post-processed
 through a K2D replica (Track A), as a **shadow trial** alongside the
-existing, live Simon+K2D system. It does not touch, modify, or depend on
+existing, live Simon/NOC+K2D system. It does not touch, modify, or depend on
 any *existing* sensor, automation, or `H:\` file beyond a read-only
 mapping used to read the live tide prediction -- it reads one existing
 sensor (`sensor.forcing_surge`, V13's live surge output) and publishes
