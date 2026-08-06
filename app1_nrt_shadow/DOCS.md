@@ -1,8 +1,12 @@
 # APP1 NRT Shadow Retrieval
 
-Read-only shadow trial of a new GNSS-IR retrieval pipeline. Logs a height
-estimate roughly every 15 minutes to `/data/results.csv`. Publishes
-nothing to Home Assistant and does not modify anything in `/config`.
+Shadow trial of a new GNSS-IR retrieval pipeline, post-processed through
+a K2D replica. Logs a raw and K2D-filtered height estimate roughly every
+15 minutes to `/data/results.csv`, and publishes them as
+`sensor.dji_obs_raw` / `sensor.dji_obs_k2d`. Reads `sensor.forcing_surge`
+(V13's live output) to drive the K2D step. Does not modify anything in
+`/config`, and does not touch `sensor.gnss15k2d` or any entity it doesn't
+itself own.
 
 ## Configuration
 
@@ -23,14 +27,18 @@ Watch the add-on's Log tab for lines like:
 
 ```
 INFO Ingested APP1218a00.26O.gz: 2985 rows
-INFO Cycle 2026-08-05 00:00:00: value=1.234m n_arcs=41 rate=0.32 flagged=False (0.9s)
+INFO Cycle 2026-08-05 00:00:00: value=1.234m k2d=1.198m n_arcs=41 rate=0.32 flagged=False (0.9s)
 ```
 
 `flagged=True` means the implied rate of change from the previous cycle
-exceeded 2.5 m/hr -- logged for later analysis, not acted on.
+exceeded 2.5 m/hr -- logged for later analysis, not acted on. If
+`sensor.forcing_surge` can't be reached, `k2d=None` and the cycle falls
+back to logging the raw value only -- a permission/network hiccup on the
+K2D side never blocks the raw retrieval or crashes the cycle.
 
 ## Data
 
-`/data/results.csv` is the trial log (append-only). `/data/rolling_buffer.parquet`
-and `/data/anchor_history.pkl` are internal state, persisted so a restart
-doesn't lose the last several hours of context.
+`/data/results.csv` is the trial log (append-only, mirrored to
+`/share/app1_nrt_shadow_results.csv`). `/data/rolling_buffer.parquet`,
+`/data/anchor_history.pkl`, and `/data/k2d_state.pkl` are internal state,
+persisted so a restart doesn't lose the last several hours of context.

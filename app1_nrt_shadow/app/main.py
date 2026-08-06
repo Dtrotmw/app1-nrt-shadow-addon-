@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 import pandas as pd
 import pymap3d as pm
+import requests
 import smbclient
 from scipy import interpolate
 
@@ -52,6 +53,7 @@ from pipeline.geometry import SIG_PRIORITY, az_el_series
 from pipeline.masks import MASK_NW_REFINED
 from pipeline.invsnr_fit import invsnr_day
 from pipeline.tropo_rh import site_met, bend_eqn
+from pipeline.k2d_replica import k2d_step
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
                      stream=sys.stdout)
@@ -63,7 +65,24 @@ BUFFER_PARQUET = os.path.join(DATA_DIR, "rolling_buffer.parquet")
 HISTORY_PICKLE = os.path.join(DATA_DIR, "anchor_history.pkl")
 PROCESSED_JSON = os.path.join(DATA_DIR, "processed_files.json")
 LAST_REPORT_JSON = os.path.join(DATA_DIR, "last_report.json")
+K2D_STATE_PICKLE = os.path.join(DATA_DIR, "k2d_state.pkl")
 NAV_DIR = os.path.join(DATA_DIR, "nav")
+
+# K2D post-processing (Track A, CHANGELOG entry 53/55): forcing_surge (V13's
+# separate 8-feature Ridge regression over met/river data) is deliberately
+# NOT reimplemented here -- read live from the real deployed sensor instead,
+# same design philosophy k2d_replica.py itself documents ("decouples testing
+# K2D's own logic from re-deriving V13"). sensor.forcing_surge is V13's own
+# direct output (David confirmed, 2026-08-06), not the gnss15k2d K2D sensor's
+# own `forcing` attribute -- the latter only updates on K2D's own ~39min-
+# lagged cadence (measured directly, entry 53); this dedicated sensor should
+# be more current. Even so, the forcing value used each cycle can still be a
+# little stale relative to our own report time -- accepted, since surge
+# varies over hours, not minutes.
+K2D_FORCING_ENTITY = "sensor.forcing_surge"
+HA_API_BASE = "http://supervisor/core/api"
+DJI_OBS_RAW_ENTITY = "sensor.dji_obs_raw"
+DJI_OBS_K2D_ENTITY = "sensor.dji_obs_k2d"
 
 # Validated 2026-08 campaign config (CHANGELOG entries 39-46). Do not change
 # without re-validating against the same evidence base -- see the briefing.
@@ -83,6 +102,74 @@ def utcnow_naive():
     into the error log until this was fixed. Keep all live-clock reads
     naive for consistency with the buffer."""
     return pd.Timestamp.utcnow().tz_localize(None)
+
+
+# ---------------------------------------------------------------------------
+# Home Assistant Core API (via Supervisor's proxy -- SUPERVISOR_TOKEN is
+# auto-injected into every add-on container when config.yaml declares
+# homeassistant_api: true; no separate credential needed)
+# ---------------------------------------------------------------------------
+
+def ha_get_state(entity_id):
+    """GET a live HA entity's {state, attributes, ...}. Returns None (logged,
+    not raised) on any failure -- a permission/network hiccup here must not
+    crash a cycle that would otherwise have a perfectly good raw retrieval."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        log.warning("SUPERVISOR_TOKEN not set -- is homeassistant_api: true in config.yaml?")
+        return None
+    try:
+        r = requests.get(f"{HA_API_BASE}/states/{entity_id}",
+                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        log.warning(f"ha_get_state({entity_id}) failed: {type(e).__name__}: {e}")
+        return None
+
+
+def ha_set_state(entity_id, state, attributes=None):
+    """POST a new state for an entity this add-on owns (dji_obs_raw/k2d) --
+    creates it on first use, same as any other HA REST-API-published sensor.
+    Best-effort: logs and continues on failure, never raises."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return
+    try:
+        r = requests.post(f"{HA_API_BASE}/states/{entity_id}",
+                           headers={"Authorization": f"Bearer {token}"},
+                           json=dict(state=state, attributes=attributes or {}), timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        log.warning(f"ha_set_state({entity_id}) failed: {type(e).__name__}: {e}")
+
+
+def get_forcing_surge():
+    """Current V13 surge forcing, read straight from the live deployed
+    sensor (David confirmed sensor.forcing_surge is V13's own direct output,
+    2026-08-06) -- deliberately not reimplemented here, see K2D_FORCING_ENTITY
+    docstring above. Returns None (k2d_step tolerates this -- see its own
+    docstring) if the sensor is unavailable or unparseable."""
+    d = ha_get_state(K2D_FORCING_ENTITY)
+    if d is None:
+        return None
+    try:
+        return float(d["state"])
+    except (KeyError, ValueError, TypeError):
+        log.warning(f"{K2D_FORCING_ENTITY} state not a number: {d.get('state')!r}")
+        return None
+
+
+def load_k2d_state():
+    if os.path.exists(K2D_STATE_PICKLE):
+        with open(K2D_STATE_PICKLE, "rb") as f:
+            return pickle.load(f)
+    return dict(state_missing=True)  # proper cold-start seed, see k2d_step
+
+
+def save_k2d_state(state):
+    with open(K2D_STATE_PICKLE, "wb") as f:
+        pickle.dump(state, f)
 
 
 def load_options():
@@ -454,6 +541,28 @@ def run_cycle(T, buffer, history, pred_path):
     return value, info
 
 
+def run_k2d(value, T, pred_path, k2d_state):
+    """One streaming K2D cycle on top of DJI Obs's own raw value -- Track A,
+    CHANGELOG entries 53/55: confirmed on real live data to roughly halve
+    bias/RMSE against Simon's obs and eliminate implausible jumps in the
+    tested stretch. Pred comes from OUR OWN predinterp (always available at
+    the exact report time T, unlike Simon's own sensor which only updates
+    on his ~39min-lagged cadence -- entry 53) -- rebuilt fresh each cycle,
+    consistent with how the rest of the pipeline already re-reads it (cheap:
+    a CSV read + interp1d build), so a growing live feed file never goes
+    stale here. forcing comes from the live sensor.forcing_surge (V13's own
+    output, not reimplemented here -- see K2D_FORCING_ENTITY docstring).
+    Streaming (one k2d_step() call per new cycle, persisted state) rather
+    than replaying the whole history every time -- matches how the real
+    deployed filter itself operates and stays cheap over weeks of runtime."""
+    predinterp = build_predinterp(pred_path)
+    T_unix = (T - pd.Timestamp("1970-01-01")) / pd.Timedelta(seconds=1)
+    pred_T = float(predinterp(np.array([T_unix]))[0])
+    forcing = get_forcing_surge()
+    kalman, new_state, diag = k2d_step(value, pred_T, forcing, k2d_state)
+    return kalman, pred_T, forcing, new_state, diag
+
+
 def main():
     opts = load_options()
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -476,9 +585,11 @@ def main():
             backoff = min(backoff * 2, 300)
 
     buffer, history, processed, last_value, last_report_time, latest_file_end = load_state()
+    k2d_state = load_k2d_state()
     log.info(f"Startup: buffer={len(buffer)} rows, history={len(history)} cycles, "
              f"{len(processed)} files already processed, "
-             f"last_report_time={last_report_time}, latest_file_end={latest_file_end}")
+             f"last_report_time={last_report_time}, latest_file_end={latest_file_end}, "
+             f"k2d_state_missing={k2d_state.get('state_missing', False)}")
 
     poll_s = opts["poll_interval_seconds"]
     pred_path = opts["pred_file_path"]
@@ -546,15 +657,40 @@ def main():
                             if dt_hr > 0:
                                 rate = (value - last_value) / dt_hr
                                 flagged = abs(rate) > RATE_FLAG_M_PER_HR
+
+                        try:
+                            kalman, pred_T, forcing, k2d_state, k2d_diag = run_k2d(
+                                value, candidate_report, pred_path, k2d_state)
+                            save_k2d_state(k2d_state)
+                        except Exception as e:
+                            log.warning(f"K2D step failed (continuing with raw only): "
+                                        f"{type(e).__name__}: {e}")
+                            kalman, pred_T, forcing, k2d_diag = None, None, None, {}
+
                         append_result(dict(
                             report_time=candidate_report, value=value,
                             n_arcs=info.get("n_arcs"), n_samples=info.get("n_samples"),
                             cost=info.get("cost"), roughness=info.get("roughness"),
                             rate_m_per_hr=rate, flagged=flagged, cycle_seconds=round(elapsed, 2),
+                            k2d_value=kalman, k2d_status=k2d_diag.get("status"),
+                            pred=pred_T, forcing=forcing,
                         ))
                         log.info(f"Cycle {candidate_report}: value={value:.3f}m "
+                                 f"k2d={kalman if kalman is None else round(kalman,3)}m "
                                  f"n_arcs={info.get('n_arcs')} rate={rate} flagged={flagged} "
                                  f"({elapsed:.1f}s)")
+
+                        ha_set_state(DJI_OBS_RAW_ENTITY, round(value, 4), dict(
+                            unit_of_measurement="m", friendly_name="DJI Obs (raw)",
+                            report_time=str(candidate_report), n_arcs=info.get("n_arcs"),
+                            rate_m_per_hr=rate, flagged=flagged))
+                        if kalman is not None:
+                            ha_set_state(DJI_OBS_K2D_ENTITY, round(kalman, 4), dict(
+                                unit_of_measurement="m", friendly_name="DJI Obs (K2D filtered)",
+                                report_time=str(candidate_report), status=k2d_diag.get("status"),
+                                innovation=k2d_diag.get("innovation"),
+                                adaptive_r=k2d_diag.get("adaptive_r")))
+
                         history.append(info)
                         history = history[-N_HISTORY:]
                         last_value, last_report_time = value, candidate_report

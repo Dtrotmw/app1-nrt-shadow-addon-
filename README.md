@@ -1,11 +1,13 @@
 # APP1 NRT Shadow Retrieval
 
 A Home Assistant add-on running the validated GNSS-IR retrieval pipeline
-(wide mask + robust anchor, 2026-08 accuracy campaign) as a **read-only
-shadow trial** alongside the existing, live Simon+K2D system. It does not
-publish anything to Home Assistant, does not touch any existing sensor,
-automation, or `H:\` file beyond a read-only mapping used to read the
-live tide prediction. Purpose: log results for a multi-week comparison
+(wide mask + robust anchor, 2026-08 accuracy campaign), post-processed
+through a K2D replica (Track A), as a **shadow trial** alongside the
+existing, live Simon+K2D system. It does not touch, modify, or depend on
+any *existing* sensor, automation, or `H:\` file beyond a read-only
+mapping used to read the live tide prediction -- it reads one existing
+sensor (`sensor.forcing_surge`, V13's live surge output) and publishes
+two new, additive sensors of its own. Purpose: a multi-week comparison
 before any decision about replacing anything.
 
 ## What it does, every ~15 minutes
@@ -17,9 +19,14 @@ before any decision about replacing anything.
 3. Runs the validated `invsnr` retrieval (Chivenor+Instow+North mask,
    robust median-of-history anchor, 8h trailing window) using the live
    tide prediction already served at `H:\www\gnss5mins.csv`.
-4. Logs the result (timestamp, height, arc count, fit cost, implausible-
-   jump flag) to `/data/results.csv` inside the add-on's persistent
-   storage.
+4. Post-processes that raw value through a K2D replica (`pipeline/k2d_replica.py`,
+   the same constants as the deployed filter), reading live surge forcing
+   from `sensor.forcing_surge` via Home Assistant's own API -- confirmed
+   on real live data (CHANGELOG entries 53/55) to roughly halve bias/RMSE
+   against Simon's obs and eliminate implausible jumps in the tested stretch.
+5. Logs both the raw and K2D-filtered result to `/data/results.csv`, and
+   publishes them as `sensor.dji_obs_raw` / `sensor.dji_obs_k2d` for a
+   Lovelace graph card.
 
 ## Installing
 
@@ -36,22 +43,27 @@ before any decision about replacing anything.
 
 - **Log tab** (Supervisor UI): live operational status, one line per
   ingested file and per retrieval cycle.
-- **`results.csv`**: the actual trial data. Reachable via the add-on's
-  `/data` volume (e.g. the Samba/SSH add-on, or `docker cp` if you have
-  host access) -- columns: `report_time, value, n_arcs, n_samples, cost,
-  roughness, rate_m_per_hr, flagged, cycle_seconds`.
+- **`results.csv`**: the actual trial data. Reachable at
+  `\\<HA-server-IP>\share\app1_nrt_shadow_results.csv` (mirrored there
+  automatically) -- columns: `report_time, value, n_arcs, n_samples, cost,
+  roughness, rate_m_per_hr, flagged, cycle_seconds, k2d_value, k2d_status,
+  pred, forcing`.
+- **`sensor.dji_obs_raw` / `sensor.dji_obs_k2d`**: add either to a
+  Lovelace history/graph card like any other sensor.
 
 ## What it deliberately does NOT do (yet)
 
-- Does not publish an MQTT sensor or anything else visible in HA's own
-  dashboards -- logging-only, per your steer, to keep this fully
-  additive and reversible during the trial.
 - Does not implement the live plausibility gate (reject/hold-last-value
   on an implausible jump) as an actual *control* action -- it logs
   `flagged=True` for those moments so they're visible in the comparison,
   but doesn't act on them. That's a live-deployment concern, not a
   shadow-trial one.
-- Does not touch K2D or `gnss_live.yaml` in any way.
+- Does not touch `sensor.gnss15k2d`, `gnss_live.yaml`, or `forcing.yaml`
+  in any way -- reads `sensor.forcing_surge` only, never writes to it or
+  to any entity it doesn't itself own (`dji_obs_raw`/`dji_obs_k2d`).
+- Does not reimplement V13's forcing/surge model -- reads its live output
+  from the real sensor instead (same design philosophy `k2d_replica.py`
+  documents for testing K2D's own logic in isolation).
 
 ## Repository layout
 
@@ -82,5 +94,7 @@ app1_nrt_shadow/
 Result on the 2026-08 mid-July 8-day test: bias +0.246m, RMSE 0.288m
 (n=15 vs slipway), 5/184 (2.7%) implausible-jump rate at hourly cadence;
 17.9% raw / 4.6% post-K2D at native 15-min cadence with this wide mask.
+On real live trial data (2026-08-06, clean 94-point stretch): K2D took
+bias +0.249->+0.165, RMSE 0.343->0.195, implausible jumps 5/93->0/93.
 See `APP1_GNSS-IR_Briefing.md` / `CHANGELOG.md` in the main TidalStudy
 repo for the full validation history.

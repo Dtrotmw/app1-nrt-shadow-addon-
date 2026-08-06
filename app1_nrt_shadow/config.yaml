@@ -1,19 +1,23 @@
 name: "APP1 NRT Shadow Retrieval"
-version: "0.1.9"
+version: "0.2.0"
 slug: "app1_nrt_shadow"
 description: >-
-  Read-only shadow trial of the new GNSS-IR retrieval pipeline (wide mask +
-  robust anchor, validated 2026-08 against the mid-July supermoon spring).
-  Reads RINEX files from the Atom mini PC's Samba share, logs a height
-  estimate every ~15 minutes. Does NOT publish anything to Home Assistant
-  or touch any existing sensor/automation -- comparison-only, for a
-  multi-week trial before any decision about replacing the live system.
+  Shadow trial of the new GNSS-IR retrieval pipeline (wide mask + robust
+  anchor, validated 2026-08 against the mid-July supermoon spring),
+  post-processed through a K2D replica (Track A). Reads RINEX files from
+  the Atom mini PC's Samba share, reads live surge forcing from
+  sensor.forcing_surge, and publishes sensor.dji_obs_raw /
+  sensor.dji_obs_k2d for comparison alongside the live Simon+K2D system --
+  does not touch or modify any existing sensor/automation, only adds new
+  ones. Comparison-only, for a multi-week trial before any decision about
+  replacing the live system.
 url: "https://github.com/Dtrotmw/app1-nrt-shadow-addon-"
 arch:
   - amd64
 startup: services
 boot: auto
 init: false
+homeassistant_api: true
 # config:ro -- READ-ONLY access to /config (i.e. H:\), mapped to /config
 # inside the container. Used ONLY to read the live-updating tide
 # prediction (H:\www\gnss5mins.csv, confirmed already in the exact
@@ -25,6 +29,12 @@ init: false
 # share add-on, etc.), used ONLY to mirror results.csv out so it's actually
 # reachable without container/host shell access. Nothing else is written
 # there.
+# homeassistant_api: true -- grants a SUPERVISOR_TOKEN usable against Core's
+# own REST API (via http://supervisor/core/api), auto-injected, no separate
+# credential. Used to (a) read sensor.forcing_surge (V13's live surge output
+# -- deliberately not reimplemented here) and (b) publish sensor.dji_obs_raw
+# / sensor.dji_obs_k2d as new, additive entities. Never reads or writes any
+# other entity, and never touches sensor.gnss15k2d or gnss_live.yaml itself.
 map:
   - "addon_config:rw"
   - "config:ro"

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+- Added K2D post-processing (Track A): every raw retrieval is now also run
+  through a K2D replica (`pipeline/k2d_replica.py`, same constants as the
+  deployed filter), reading live surge forcing from `sensor.forcing_surge`
+  via Home Assistant's own API (new `homeassistant_api: true` permission).
+  Confirmed on real live data to roughly halve bias/RMSE against Simon's
+  obs and eliminate implausible jumps in the tested stretch.
+- Publishes `sensor.dji_obs_raw` and `sensor.dji_obs_k2d` for a Lovelace
+  graph card -- new, additive entities; nothing existing is touched.
+- `results.csv` gains four columns: `k2d_value, k2d_status, pred, forcing`.
+- A K2D-side failure (forcing sensor unreachable, etc.) degrades to
+  raw-only for that cycle rather than blocking or crashing it.
+
 ## 0.1.9
 - Fixed a CSV formatting bug found during a health-check analysis: pandas
   drops the time-of-day when a single-row CSV append's report_time happens
