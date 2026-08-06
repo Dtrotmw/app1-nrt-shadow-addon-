@@ -115,14 +115,16 @@ repo for the full validation history.
 ## Acknowledgments
 
 **Simon Williams (National Oceanography Centre)** is the reason any of
-this exists. His own GNSS-IR pipeline produced the harmonics UKHO
-currently publishes for Appledore and the ones deployed at APP1; his K2D
-Kalman filter and V13 surge model are the live system this add-on runs
-alongside, not against; and this whole comparison depends on his ongoing,
-public ThingSpeak feed and `sensor.forcing_surge` output. This trial
-exists to test whether specific, narrow refinements can be evidenced
-against his own product, using his own data as the reference -- not as a
-critique of it. Any of this that turns out useful is his to take or leave.
+this exists. His own GNSS-IR pipeline, run on the APP and APP1 antennas,
+produced the harmonics UKHO currently publishes for Appledore, and his
+ongoing ThingSpeak observation feed is the live reference this whole
+comparison is checked against. K2D (the Kalman filter) and V13 (the
+surge model behind `sensor.forcing_surge`), layered on top of Simon's
+harmonics, are David's own work, not Simon's. This trial exists to test
+whether specific, narrow refinements to the retrieval feeding into that
+system can be evidenced against Simon's own product, using his own data
+as the reference -- not as a critique of it. Any of this that turns out
+useful is his to take or leave.
 
 The retrieval method itself follows **Strandberg, Hobiger & Haas (2016)**,
 *Radio Science* 51, 1286-1296 -- fitting a single continuous reflector-
