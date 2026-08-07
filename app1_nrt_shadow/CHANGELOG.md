@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2
+- Switched the retrieval mask from the wide Chivenor+Instow+North
+  combination to North sector alone (`MASK_NORTH_ONLY`). Properly-settled
+  testing against the full 41-reading slipway record (TidalStudy
+  CHANGELOG entry 59) showed North-only clearly beats the wide mask on
+  both accuracy and the false-negative rate that actually matters for
+  restriction decisions -- the earlier "wide is better" reading was a
+  test-design artefact (state resetting too often), not a real property
+  of the sectors.
+- Deployed the GLONASS L2 (S2C) fallback signal fix that had been built
+  but never actually pushed to this repo -- confirmed present in real
+  data, previously unreachable even as a fallback.
+- Confirmed via the same evidence base that multi-frequency mode and an
+  alternative (centroid-weighted) initialization scheme do NOT help --
+  neither adopted; `signal_mode="primary"` and raw-peak initialization
+  stay as deployed.
+
 ## 0.2.1
 - Suppressed smbprotocol's own per-SMB2-exchange INFO logging (raised to
   WARNING) -- it was drowning out the handful of lines that actually

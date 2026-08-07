@@ -24,7 +24,13 @@ SIG_PRIORITY = {
     "G": ["S1C", "S1", "C1", "S2W", "S2", "S2L", "S5Q", "S5"],
     "E": ["S1C", "S1", "S5Q", "S5", "S7Q", "S7", "S8Q", "S8"],
     "C": ["S2I", "S2", "S6I", "S6", "S7I", "S7", "S1I", "S1"],
-    "R": ["S1C", "S1", "C1", "C1C"],
+    # S2C added 2026-08-07: confirmed present with real data for all 11
+    # GLONASS satellites in a real RINEX file, but previously absent from
+    # this list entirely -- silently unreachable even though it existed
+    # (found via a direct constellation-by-constellation signal-availability
+    # check, not assumed). S2P/S2 kept as further fallbacks in case a
+    # different receiver/day uses a different L2 code.
+    "R": ["S1C", "S1", "C1", "C1C", "S2C", "S2P", "S2"],
 }
 
 LAMBDA_MAP = {
@@ -35,6 +41,14 @@ LAMBDA_MAP = {
     "S7Q": 0.24800, "S7I": 0.24800, "S8Q": 0.24800,
     "S7": 0.24800, "S8": 0.24800,
     "S1I": 0.19029,
+    # GLONASS is FDMA (each satellite its own channel, unlike CDMA GPS/
+    # Galileo/BeiDou), so any single constant here is an approximation --
+    # already true of S1C above, which reuses GPS's L1 wavelength (0.19029)
+    # rather than GLONASS's own (~0.18711 at channel 0). Kept consistent
+    # with that existing approximation rather than introducing a new,
+    # differently-approximated convention: GLONASS L2 channel-0 nominal
+    # frequency 1246.0 MHz -> wavelength c/f = 0.24058m.
+    "S2C": 0.24058, "S2P": 0.24058,
 }
 
 

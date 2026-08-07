@@ -97,20 +97,35 @@ app1_nrt_shadow/
 ## Validated configuration this add-on runs (do not change without
 ## re-testing against the same evidence base)
 
-- Mask: Chivenor + Instow + North (`MASK_NW_REFINED`)
+- Mask: North sector alone (`MASK_NORTH_ONLY`) -- **not** the wider
+  Chivenor+Instow+North combination this add-on ran through v0.2.1.
+  Changed 2026-08-07 (v0.2.2, CHANGELOG entry 59): properly-settled
+  testing (block-continuous, matching how this add-on actually runs --
+  never resetting) showed North-only clearly beats the wide mask on
+  both raw/K2D accuracy and the decision-relevant false-negative rate,
+  in every band tested against the full 41-reading slipway record. The
+  earlier "wide beats North" reading (entry 46) was a settling-time
+  artefact of a differently-designed test, not a real property of the
+  sectors. The West boundary of the North sector was itself swept
+  afterward (entry 62) and confirmed already optimal -- not narrowed.
 - Refraction: Ulich (1981) + Rueger (2002), GPT2w climatological met
 - Knot spacing: 45 min, surge-smoothness regularizer weight 20
 - 8h trailing window, robust median anchor over the last 12 cycles
   (~3h of memory at 15-min cadence)
 - Full-state anchor weight 50 (height spline + per-stream A/B + roughness)
+- GLONASS L2 (S2C) added as a fallback signal (entry 60) -- confirmed
+  present in real data but previously unreachable; only activates when
+  a satellite's primary (L1) signal is missing for a given epoch.
+- Multi-frequency mode and centroid-weighted initialization were both
+  tested (entries 60-61) and found NOT to help -- stayed on
+  `signal_mode="primary"` / raw-peak initialization.
 
-Result on the 2026-08 mid-July 8-day test: bias +0.246m, RMSE 0.288m
-(n=15 vs slipway), 5/184 (2.7%) implausible-jump rate at hourly cadence;
-17.9% raw / 4.6% post-K2D at native 15-min cadence with this wide mask.
-On real live trial data (2026-08-06, clean 94-point stretch): K2D took
-bias +0.249->+0.165, RMSE 0.343->0.195, implausible jumps 5/93->0/93.
-See `APP1_GNSS-IR_Briefing.md` / `CHANGELOG.md` in the main TidalStudy
-repo for the full validation history.
+Result, North-only + K2D, block-continuous test against the full
+41-reading slipway record (2026-08-07): bias +0.137, RMSE 0.218
+overall; RMSE 0.171 in the low (<0.3m) sub-band. See
+`APP1_GNSS-IR_Briefing.md` / `CHANGELOG.md` in the main TidalStudy repo
+(entries 59-62) for the full validation history, including the wide-
+mask figures this superseded.
 
 ## Acknowledgments
 

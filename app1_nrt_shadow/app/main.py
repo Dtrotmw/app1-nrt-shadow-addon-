@@ -50,7 +50,7 @@ from pipeline.arcfit import (
     RX_XYZ, TOTALANTH, get_or_download_navfile, build_predinterp,
 )
 from pipeline.geometry import SIG_PRIORITY, az_el_series
-from pipeline.masks import MASK_NW_REFINED
+from pipeline.masks import MASK_NORTH_ONLY
 from pipeline.invsnr_fit import invsnr_day
 from pipeline.tropo_rh import site_met, bend_eqn
 from pipeline.k2d_replica import k2d_step
@@ -94,9 +94,16 @@ HA_API_BASE = "http://supervisor/core/api"
 DJI_OBS_RAW_ENTITY = "sensor.dji_obs_raw"
 DJI_OBS_K2D_ENTITY = "sensor.dji_obs_k2d"
 
-# Validated 2026-08 campaign config (CHANGELOG entries 39-46). Do not change
-# without re-validating against the same evidence base -- see the briefing.
-RETRIEVAL_KWARGS = dict(sectors=MASK_NW_REFINED, knot_minutes=45, reg_smooth=20.0)
+# Validated config, CHANGELOG entry 59 (2026-08-07): North sector ALONE, not
+# the wider Chivenor+Instow+North combination this add-on ran through v0.2.1.
+# Properly settled (block-continuous) testing against the full 41-reading
+# slipway record showed North-only clearly beats the wide mask on both
+# raw/K2D accuracy and the decision-relevant false-negative rate, in every
+# band tested -- the earlier "wide beats North" reading (entry 46) was a
+# settling-time artefact of a differently-designed test, not real. Do not
+# change without re-validating against the same evidence base -- see the
+# briefing.
+RETRIEVAL_KWARGS = dict(sectors=MASK_NORTH_ONLY, knot_minutes=45, reg_smooth=20.0)
 WINDOW_HOURS = 8
 STATE_ANCHOR_WEIGHT = 50.0
 N_HISTORY = 12          # ~3h of anchor memory at 15-min report cadence (entry 45)

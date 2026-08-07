@@ -1,9 +1,10 @@
 name: "APP1 NRT Shadow Retrieval"
-version: "0.2.1"
+version: "0.2.2"
 slug: "app1_nrt_shadow"
 description: >-
-  Shadow trial of the new GNSS-IR retrieval pipeline (wide mask + robust
-  anchor, validated 2026-08 against the mid-July supermoon spring),
+  Shadow trial of the new GNSS-IR retrieval pipeline (North sector alone,
+  robust anchor -- entry 59, 2026-08-07: properly-settled testing showed
+  this clearly beats the earlier wide Chivenor+Instow+North combination),
   post-processed through a K2D replica (Track A). Reads RINEX files from
   the Atom mini PC's Samba share, reads live surge forcing from
   sensor.forcing_surge, and publishes sensor.dji_obs_raw /

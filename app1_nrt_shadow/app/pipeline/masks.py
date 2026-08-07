@@ -44,8 +44,21 @@ MASK_NW_EXPANDED["North"] = dict(minaz=300, maxaz=33, minel=1.5, maxel=12.0, wei
 MASK_NW_REFINED = dict(BASELINE_SECTORS)
 MASK_NW_REFINED["North"] = dict(minaz=300, maxaz=43, minel=1.5, maxel=12.0, weight=0.5)
 
+# (d) North sector ALONE (no Chivenor/Instow) -- CHANGELOG entry 59, 2026-08-07:
+# properly settled (block-continuous, matching how the live add-on actually
+# runs -- never resetting), North-only clearly beats the wide MASK_NW_REFINED
+# combination on both raw/K2D accuracy and the decision-relevant false-negative
+# rate, in every band tested against the full 41-reading slipway record. The
+# earlier "wide mask beats North" reading (this same mask, entry 46) was a
+# settling-time artefact of a differently-designed sliding-window test, not a
+# real property of the sectors -- see entry 59 for the full correction.
+# Deployed live in the shadow trial add-on from v0.2.2 onward (was
+# MASK_NW_REFINED through v0.2.1).
+MASK_NORTH_ONLY = {"North": dict(minaz=300, maxaz=43, minel=1.5, maxel=12.0, weight=0.5)}
+
 ALL_MASKS = {
     "baseline": MASK_BASELINE,
     "nw_expanded": MASK_NW_EXPANDED,
     "nw_refined": MASK_NW_REFINED,
+    "north_only": MASK_NORTH_ONLY,
 }
